@@ -116,7 +116,7 @@ int main(int argc, char *argv[])
 	int ret;
 
 	/* Memory initialization */
-	memset(&j2stl, 0, sizeof(audio_data));
+	memset(&j2stl, 0, sizeof(j2stl));
 	pthread_mutex_init(&j2stl.memsync.mutex, NULL);
 	pthread_cond_init(&j2stl.memsync.cond, NULL);
 	j2stl.status.progname = basename(argv[0]);
