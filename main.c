@@ -50,7 +50,7 @@ void exit_help(const char *name)
 	fprintf(stderr, "\t-w wisdom_file\n");
 	fprintf(stderr, "\t-t int, process timeout (default infinite)\n");
 	fprintf(stderr, "\t-s int, audio sampling, in milliseconds "
-			"(default %d\n", SAMPLE_DURATION);
+			"(default %d)\n", SAMPLE_DURATION);
 	fprintf(stderr, "\t-h print this message and exits\n");
 
 	exit(EXIT_FAILURE);
