@@ -166,9 +166,6 @@ void *fftw_thread(void *arg)
 	J2STL *j2stl;
 	/* FFTW variables */
 	struct fftw_handle fftwh;
-	/* FFTW widsom variables */
-	char *wisdom_name = NULL;
-	int wisdom_name_size;
 
 	j2stl = (J2STL *)arg;
 
@@ -201,27 +198,24 @@ void *fftw_thread(void *arg)
 	pthread_cleanup_push(fftw_free, fftwh.in);
 	pthread_cleanup_push(fftw_free, fftwh.out);
 
-	/* Wisdom name */
-	wisdom_name_size = asprintf(&wisdom_name, "%s.wisdom",
-				    j2stl->status.progname);
-	if (wisdom_name_size == -1) {
-		fprintf(stderr, "Unable to allocate memory for wisdow filename:"
-				" %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-	pthread_cleanup_push(free, wisdom_name);
-
 	/* Wisdom import */
-	if (fftw_import_wisdom_from_filename(wisdom_name) == 0)
-		fprintf(stderr, "Unable to retrieve wisdom from %s\n",
-			wisdom_name);
+	if (j2stl->status.wisdomfile) {
+		if (!fftw_import_wisdom_from_filename(j2stl->status.wisdomfile))
+			fprintf(stderr, "Unable to retrieve wisdom from %s\n",
+				j2stl->status.wisdomfile);
+	}
 
 	/* Plan creation */
 	fftwh.p = fftw_plan_dft_1d(j2stl->audio.size, fftwh.in, fftwh.out,
 				   FFTW_FORWARD, FFTW_PATIENT);
 	pthread_cleanup_push(fftw_destroy_plan, fftwh.p);
-	if (fftw_export_wisdom_to_filename(wisdom_name) == 0)
-		fprintf(stderr, "Unable to export wisdom to %s\n", wisdom_name);
+
+	/* Save wisdom */
+	if (j2stl->status.wisdomfile) {
+		if (!fftw_export_wisdom_to_filename(j2stl->status.wisdomfile))
+			fprintf(stderr, "Unable to export wisdom to %s\n",
+				j2stl->status.wisdomfile);
+	}
 
 	/* Process loop */
 	while (1) {
@@ -235,7 +229,6 @@ void *fftw_thread(void *arg)
 #endif
 
 	pthread_cleanup_pop(1); /* plan cleanup */
-	pthread_cleanup_pop(1); /* wisdom name */
 	pthread_cleanup_pop(1); /* fftw_free out */
 	pthread_cleanup_pop(1); /* fftw_free in */
 	pthread_cleanup_pop(1); /* free raw_data */

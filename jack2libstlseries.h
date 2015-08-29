@@ -66,6 +66,7 @@ typedef struct {
 /* program status and options */
 typedef struct {
 	const char *progname;
+	const char *wisdomfile;
 } status_data;
 
 /* memory sync */

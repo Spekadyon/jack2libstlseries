@@ -17,12 +17,13 @@
  * jack2libstlseries. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define _POSIX_C_SOURCE 2
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h> //sleep()
+#include <unistd.h>
 #include <pthread.h>
 #include <math.h>
 #include <complex.h>
@@ -34,6 +35,22 @@
 #include <fftw3.h>
 
 #include "jack2libstlseries.h"
+
+
+/*
+ * Print help and exists
+ */
+
+void exit_help(const char *name)
+{
+	fprintf(stderr, "jack2libstlseries\n\n");
+	fprintf(stderr, "Usage\n");
+	fprintf(stderr, "\t%s [options]\n\n", name);
+	fprintf(stderr, "Options:\n");
+	fprintf(stderr, "\t-w wisdom_file\n");
+
+	exit(EXIT_FAILURE);
+}
 
 
 /*
@@ -104,6 +121,27 @@ int jack_process(jack_nframes_t nframes, void *arg)
 }
 
 
+/*
+ * Option parsing procedure
+ */
+
+int opt_parse(int argc, char * const * argv, status_data *status)
+{
+	int opt;
+	const char opt_list[] = "w:";
+	/* ajouter verbose et timeout */
+
+	while ( (opt = getopt(argc, argv, opt_list)) != -1 ) {
+		switch (opt) {
+		case 'w':
+			status->wisdomfile = optarg;
+		}
+	}
+
+	return 0;
+}
+
+
 int main(int argc, char *argv[])
 {
 	const char client_name[] = "SteelSeries Sound Illuminator";
@@ -120,6 +158,9 @@ int main(int argc, char *argv[])
 	pthread_mutex_init(&j2stl.memsync.mutex, NULL);
 	pthread_cond_init(&j2stl.memsync.cond, NULL);
 	j2stl.status.progname = basename(argv[0]);
+
+	/* Options parsing */
+	opt_parse(argc, argv, &j2stl.status);
 
 	/* Stlseries init */
 	if (stlseries_open(&j2stl.kbd.stlseries)) {
