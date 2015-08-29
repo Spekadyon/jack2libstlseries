@@ -51,6 +51,7 @@ void exit_help(const char *name)
 	fprintf(stderr, "\t-t int, process timeout (default infinite)\n");
 	fprintf(stderr, "\t-s int, audio sampling, in milliseconds "
 			"(default %d\n", SAMPLE_DURATION);
+	fprintf(stderr, "\t-h print this message and exits\n");
 
 	exit(EXIT_FAILURE);
 }
@@ -193,11 +194,14 @@ long int strtolint(char opt, const char *str)
 int opt_parse(int argc, char * const * argv, status_data *status)
 {
 	int opt;
-	const char opt_list[] = "w:vt:s:";
+	const char opt_list[] = "w:vt:s:h";
 	/* ajouter dump */
 
 	while ( (opt = getopt(argc, argv, opt_list)) != -1 ) {
 		switch (opt) {
+		case 'h':
+			exit_help(argv[0]);
+			break;
 		case 'w':
 			status->wisdomfile = optarg;
 			break;
