@@ -38,25 +38,38 @@
 #include "jack2libstlseries.h"
 
 
-struct audio_data_s {
-	jack_port_t *input_port;
-	unsigned int sample_rate;
-	size_t size;
-	size_t index;
-	jack_default_audio_sample_t *data;
-	pthread_mutex_t mutex;
-	pthread_cond_t cond;
-	char *progname;
-	STLSERIES stlseries;
-};
+typedef struct {
+        jack_port_t *input_port;
+} jack_data;
 
-typedef struct audio_data_s audio_data;
+typedef struct {
+        unsigned int sample_rate;
+        jack_default_audio_sample_t *data;
+        size_t size;
+        size_t index;
+} audio_data;
 
+typedef struct {
+        const char *progname;
+} status_data;
 
-void shutdown(void *arg)
-{
-	exit(EXIT_FAILURE);
-}
+typedef struct {
+        pthread_mutex_t mutex;
+        pthread_cond_t cond;
+} memory_sync;
+
+typedef struct {
+        STLSERIES stlseries;
+} keyboard_data;
+
+typedef struct {
+        jack_data jack;
+        audio_data audio;
+        status_data status;
+        memory_sync memsync;
+        keyboard_data kbd;
+} J2STL;
+// rename index to position
 
 
 unsigned char retrieve_color(double amplitude)
@@ -80,32 +93,38 @@ unsigned char retrieve_color(double amplitude)
 }
 
 
-int process(jack_nframes_t nframes, void *arg)
+void jack_shutdown(void *arg)
+{
+        exit(EXIT_FAILURE);
+}
+
+
+int jack_process(jack_nframes_t nframes, void *arg)
 {
 	static int i;
-	audio_data *data;
+	J2STL *j2stl;
 	jack_default_audio_sample_t *left;
 	size_t nb_frames;
 
-	data = (audio_data *)arg;
-	left = jack_port_get_buffer(data->input_port, nframes);
+	j2stl = (J2STL *)arg;
+	left = jack_port_get_buffer(j2stl->jack.input_port, nframes);
 
-	if ( (data->size - data->index) < nframes)
-		nb_frames = data->size - data->index;
+	if ( (j2stl->audio.size - j2stl->audio.index) < nframes)
+		nb_frames = j2stl->audio.size - j2stl->audio.index;
 	else
 		nb_frames = nframes;
 
-	pthread_mutex_lock(&data->mutex);
-	memcpy(data->data + data->index, left, nb_frames *
+	pthread_mutex_lock(&j2stl->memsync.mutex);
+	memcpy(j2stl->audio.data + j2stl->audio.index, left, nb_frames *
 	       sizeof(jack_default_audio_sample_t));
-	data->index += nb_frames;
+	j2stl->audio.index += nb_frames;
 
-	if (data->size == data->index) {
-		pthread_cond_signal(&data->cond);
-		data->index = 0;
+	if (j2stl->audio.size == j2stl->audio.index) {
+		pthread_cond_signal(&j2stl->memsync.cond);
+		j2stl->audio.index = 0;
 	}
 
-	pthread_mutex_unlock(&data->mutex);
+	pthread_mutex_unlock(&j2stl->memsync.mutex);
 
 //	fprintf(stderr, "%4d - Processing frames...\n", i);
 	i += 1;
@@ -119,7 +138,7 @@ void *fftw_thread(void *arg)
 	int ret;
 	char *wisdom_name = NULL;
 	int wisdom_name_size;
-	audio_data *data;
+	J2STL *j2stl;
 	jack_default_audio_sample_t *left;
 	fftw_complex *in, *out;
 	static int i;
@@ -127,7 +146,7 @@ void *fftw_thread(void *arg)
 	fftw_plan p;
 
 	/* arg -> data cast */
-	data = (audio_data *)arg;
+	j2stl = (J2STL *)arg;
 
 #ifdef _OUTPUT
 	FILE *fp;
@@ -140,21 +159,22 @@ void *fftw_thread(void *arg)
 #endif /* _OUTPUT */
 
 	/* Wisdom name */
-	wisdom_name_size = asprintf(&wisdom_name, "%s.wisdom", data->progname);
+	wisdom_name_size = asprintf(&wisdom_name, "%s.wisdom",
+				    j2stl->status.progname);
 	if (wisdom_name_size == -1) {
 		fprintf(stderr, "Unable to allocate memory for wisdow filename:"
 				" %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
-	left = malloc(sizeof(jack_default_audio_sample_t) * data->size);
+	left = malloc(sizeof(jack_default_audio_sample_t) * j2stl->audio.size);
 	if (left == NULL) {
 		fprintf(stderr, "Unable to allocate memory for audio buffers "
 				"(fftw thread): %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
-	in = fftw_malloc(sizeof(fftw_complex) * data->size);
-	out = fftw_malloc(sizeof(fftw_complex) * data->size);
+	in = fftw_malloc(sizeof(fftw_complex) * j2stl->audio.size);
+	out = fftw_malloc(sizeof(fftw_complex) * j2stl->audio.size);
 	if ( (in == NULL) || (out == NULL) ) {
 		fprintf(stderr, "Unable to allocate memory for fftw\n");
 		exit(EXIT_FAILURE);
@@ -163,7 +183,8 @@ void *fftw_thread(void *arg)
 	if (fftw_import_wisdom_from_filename(wisdom_name) == 0)
 		fprintf(stderr, "Unable to retrieve wisdom from %s\n",
 			wisdom_name);
-	p = fftw_plan_dft_1d(data->size, in, out, FFTW_FORWARD, FFTW_PATIENT);
+	p = fftw_plan_dft_1d(j2stl->audio.size, in, out, FFTW_FORWARD,
+			     FFTW_PATIENT);
 	if (fftw_export_wisdom_to_filename(wisdom_name) == 0)
 		fprintf(stderr, "Unable to export wisdom to %s\n", wisdom_name);
 	free(wisdom_name);
@@ -172,20 +193,20 @@ void *fftw_thread(void *arg)
 	while (1) {
 		int low = 0, mid = 0, high = 0;
 
-		pthread_mutex_lock(&data->mutex);
-		pthread_cond_wait(&data->cond, &data->mutex);
-		memcpy(left, data->data, sizeof(jack_default_audio_sample_t) *
-		       data->size);
-		pthread_mutex_unlock(&data->mutex);
+		pthread_mutex_lock(&j2stl->memsync.mutex);
+		pthread_cond_wait(&j2stl->memsync.cond, &j2stl->memsync.mutex);
+		memcpy(left, j2stl->audio.data,
+		       sizeof(jack_default_audio_sample_t) * j2stl->audio.size);
+		pthread_mutex_unlock(&j2stl->memsync.mutex);
 
-		for (size_t i = 0; i < data->size; i++) {
+		for (size_t i = 0; i < j2stl->audio.size; i++) {
 			in[i] = left[i];
 		}
 		fftw_execute(p);
 		max_left = 0;
-		for (size_t i = 0; i < data->size/2; i++) {
-			double freq = i * data->sample_rate /
-				(double)(data->size - 1);
+		for (size_t i = 0; i < j2stl->audio.size/2; i++) {
+			double freq = i * j2stl->audio.sample_rate /
+				(double)(j2stl->audio.size - 1);
 			if (freq < FREQ_LIMIT_BASS_MEDIUM) {
 				if (cabs(out[i]) > cabs(out[low]))
 					low = i;
@@ -209,26 +230,26 @@ void *fftw_thread(void *arg)
 		/*
 		 * Keyoard color
 		 */
-		ret = stlseries_setcolor_normal(data->stlseries,
+		ret = stlseries_setcolor_normal(j2stl->kbd.stlseries,
 						STLSERIES_ZONE_LEFT,
 						retrieve_color(cabs(out[low]) /
-							(double)(data->size)),
+							(double)(j2stl->audio.size)),
 						STLSERIES_SATURATION_HIGH);
 		if (ret)
 			fprintf(stderr, "Unable to set keyboard color "
 					"(left)\n");
-		ret = stlseries_setcolor_normal(data->stlseries,
+		ret = stlseries_setcolor_normal(j2stl->kbd.stlseries,
 						STLSERIES_ZONE_CENTER,
 						retrieve_color(cabs(out[mid]) /
-							(double)(data->size)),
+							(double)(j2stl->audio.size)),
 						STLSERIES_SATURATION_HIGH);
 		if (ret)
 			fprintf(stderr, "Unable to set keyboard color "
 					"(center)\n");
-		ret = stlseries_setcolor_normal(data->stlseries,
+		ret = stlseries_setcolor_normal(j2stl->kbd.stlseries,
 						STLSERIES_ZONE_RIGHT,
 						retrieve_color(cabs(out[high]) /
-							(double)(data->size)),
+							(double)(j2stl->audio.size)),
 						STLSERIES_SATURATION_HIGH);
 		if (ret)
 			fprintf(stderr, "Unable to set keyboard color "
@@ -268,17 +289,17 @@ int main(int argc, char *argv[])
 	const char *client_name_real;
 	jack_client_t *jack_client_ptr;
 	jack_status_t status;
-	audio_data data;
+	J2STL j2stl;
 	pthread_t fftw_pthread_t;
 	int ret;
 
-	memset(&data, 0, sizeof(audio_data));
-	pthread_mutex_init(&data.mutex, NULL);
-	pthread_cond_init(&data.cond, NULL);
-	data.progname = basename(argv[0]);
+	memset(&j2stl, 0, sizeof(audio_data));
+	pthread_mutex_init(&j2stl.memsync.mutex, NULL);
+	pthread_cond_init(&j2stl.memsync.cond, NULL);
+	j2stl.status.progname = basename(argv[0]);
 
 	/* Stlseries init */
-	if (stlseries_open(&data.stlseries)) {
+	if (stlseries_open(&j2stl.kbd.stlseries)) {
 		fprintf(stderr, "Unable to open steelseries keyboard.\n");
 		exit(EXIT_FAILURE);
 	}
@@ -303,31 +324,34 @@ int main(int argc, char *argv[])
 		client_name_real = client_name;
 	}
 
-	jack_set_process_callback(jack_client_ptr, process, &data);
-	jack_on_shutdown(jack_client_ptr, shutdown, NULL);
+        jack_set_process_callback(jack_client_ptr, jack_process, &j2stl);
+        jack_on_shutdown(jack_client_ptr, jack_shutdown, NULL);
 
-	data.sample_rate = jack_get_sample_rate(jack_client_ptr);
-	data.size = lrint((SAMPLE_DURATION / 1000.0) * data.sample_rate);
-	data.data = malloc(sizeof(jack_default_audio_sample_t) * data.size);
-	if (data.data == NULL) {
+	j2stl.audio.sample_rate = jack_get_sample_rate(jack_client_ptr);
+	j2stl.audio.size = lrint((SAMPLE_DURATION / 1000.0) *
+				 j2stl.audio.sample_rate);
+	j2stl.audio.data = malloc(sizeof(jack_default_audio_sample_t) *
+				  j2stl.audio.size);
+	if (j2stl.audio.data == NULL) {
 		fprintf(stderr, "Unable to allocate memory for sound buffers: "
 				"%s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
-	fprintf(stderr, "Sample rate : %u\n", data.sample_rate);
+	fprintf(stderr, "Sample rate : %u\n", j2stl.audio.sample_rate);
 
-	data.input_port = jack_port_register(jack_client_ptr, "input",
+	j2stl.jack.input_port = jack_port_register(jack_client_ptr, "input",
 					     JACK_DEFAULT_AUDIO_TYPE,
 					     JackPortIsInput, 0);
-	if (data.input_port == NULL) {
+	if (j2stl.jack.input_port == NULL) {
 		fprintf(stderr, "No port available.\n");
 		exit(EXIT_FAILURE);
 	}
 
 	/* Threads launch */
 
-	if ((ret = pthread_create(&fftw_pthread_t, NULL, fftw_thread, &data))) {
+	if ((ret = pthread_create(&fftw_pthread_t, NULL,
+				  fftw_thread, &j2stl))) {
 		fprintf(stderr, "Unable to spawn fftw thread: %s\n",
 			strerror(ret));
 		exit(EXIT_FAILURE);
@@ -356,9 +380,9 @@ int main(int argc, char *argv[])
 	
 
 	jack_client_close(jack_client_ptr);
-	free(data.data);
-	pthread_cond_destroy(&data.cond);
-	pthread_mutex_destroy(&data.mutex);
+	free(j2stl.audio.data);
+	pthread_cond_destroy(&j2stl.memsync.cond);
+	pthread_mutex_destroy(&j2stl.memsync.mutex);
 	stlseries_close();
 
 	return EXIT_SUCCESS;
