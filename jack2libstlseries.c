@@ -38,39 +38,54 @@
 #include "jack2libstlseries.h"
 
 
+/*
+ * Custom structures
+ */
+
+/* jack */
 typedef struct {
-        jack_port_t *input_port;
+	jack_port_t *input_port;
 } jack_data;
 
+/* audio data */
 typedef struct {
-        unsigned int sample_rate;
-        jack_default_audio_sample_t *data;
-        size_t size;
-        size_t position;
+	unsigned int sample_rate;
+	jack_default_audio_sample_t *data;
+	size_t size;
+	size_t position;
 } audio_data;
 
+/* program status and options */
 typedef struct {
-        const char *progname;
+	const char *progname;
 } status_data;
 
+/* memory sync */
 typedef struct {
-        pthread_mutex_t mutex;
-        pthread_cond_t cond;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
 } memory_sync;
 
+/* Keyboard related data */
 typedef struct {
-        STLSERIES stlseries;
+	STLSERIES stlseries;
 } keyboard_data;
 
-typedef struct {
-        jack_data jack;
-        audio_data audio;
-        status_data status;
-        memory_sync memsync;
-        keyboard_data kbd;
-} J2STL;
-// rename index to position
+/* global structure */
+struct J2STL_s {
+	jack_data jack;
+	audio_data audio;
+	status_data status;
+	memory_sync memsync;
+	keyboard_data kbd;
+};
+typedef struct J2STL_s J2STL;
 
+
+/*
+ * Transform the amplitude in color
+ * see jack2libstlseries.h for limit definitions
+ */
 
 unsigned char retrieve_color(double amplitude)
 {
@@ -93,59 +108,90 @@ unsigned char retrieve_color(double amplitude)
 }
 
 
+/*
+ * Executes this function when the client is disconnected by jack
+ */
+
 void jack_shutdown(void *arg)
 {
-        exit(EXIT_FAILURE);
+	J2STL *j2stl = (J2STL *)arg;
+
+	free(j2stl->audio.data);
+	pthread_cond_destroy(&j2stl->memsync.cond);
+	pthread_mutex_destroy(&j2stl->memsync.mutex);
+	stlseries_close();
+
+	exit(EXIT_FAILURE);
 }
 
 
+/*
+ * Procedure called by jack thread, copy audio in J2STL.audio.data buffer
+ * Unlock mutex when the buffer is full.
+ * Extra frames are discarded.
+ */
+
 int jack_process(jack_nframes_t nframes, void *arg)
 {
-	static int i;
+	static int call_counter;
 	J2STL *j2stl;
-        jack_default_audio_sample_t *jack_data;
-        size_t available_frames;
+	jack_default_audio_sample_t *jack_data;
+	size_t available_frames;
 
 	j2stl = (J2STL *)arg;
-        jack_data = jack_port_get_buffer(j2stl->jack.input_port, nframes);
 
-        if ( (j2stl->audio.size - j2stl->audio.position) < nframes)
-                available_frames = j2stl->audio.size - j2stl->audio.position;
+	/* Retrieve data from jack, size == nframes */
+	jack_data = jack_port_get_buffer(j2stl->jack.input_port, nframes);
+
+	/* Check the available space in j2stl->audio.data */
+	if ( (j2stl->audio.size - j2stl->audio.position) < nframes)
+		available_frames = j2stl->audio.size - j2stl->audio.position;
 	else
-                available_frames = nframes;
+		available_frames = nframes;
 
+	/* Lock memory before copy */
 	pthread_mutex_lock(&j2stl->memsync.mutex);
-        memcpy(j2stl->audio.data + j2stl->audio.position, jack_data, available_frames *
-	       sizeof(jack_default_audio_sample_t));
-        j2stl->audio.position += available_frames;
+	/* Copy into shared buffer */
+	memcpy(j2stl->audio.data + j2stl->audio.position, jack_data,
+	       available_frames * sizeof(jack_default_audio_sample_t));
+	j2stl->audio.position += available_frames;
 
-        if (j2stl->audio.size == j2stl->audio.position) {
+	/* If buffer full, signal ``processing'' thread */
+	if (j2stl->audio.size == j2stl->audio.position) {
 		pthread_cond_signal(&j2stl->memsync.cond);
-                j2stl->audio.position = 0;
+		j2stl->audio.position = 0;
 	}
 
+	/* Unlock memory */
 	pthread_mutex_unlock(&j2stl->memsync.mutex);
 
-//	fprintf(stderr, "%4d - Processing frames...\n", i);
-	i += 1;
+	call_counter += 1;
 
 	return 0;
 }
 
 
+/*
+ * Worker thread
+ * Retreive data from J2STL.audio structure, calculate the fast fourier
+ * transform and extract the amplitude from the signals
+ * Controls the keyboard color
+ */
+
 void *fftw_thread(void *arg)
 {
 	int ret;
+	J2STL *j2stl;
+	/* Local raw audio data */
+	jack_default_audio_sample_t *jack_data;
+	size_t max_left;
+	/* FFTW variables */
+	fftw_complex *in, *out;
+	fftw_plan p;
+	/* FFTW widsom variables */
 	char *wisdom_name = NULL;
 	int wisdom_name_size;
-	J2STL *j2stl;
-	jack_default_audio_sample_t *left;
-	fftw_complex *in, *out;
-	static int i;
-	size_t max_left;
-	fftw_plan p;
 
-	/* arg -> data cast */
 	j2stl = (J2STL *)arg;
 
 #ifdef _OUTPUT
@@ -167,8 +213,10 @@ void *fftw_thread(void *arg)
 		exit(EXIT_FAILURE);
 	}
 
-	left = malloc(sizeof(jack_default_audio_sample_t) * j2stl->audio.size);
-	if (left == NULL) {
+	/* Memory allocation */
+	jack_data = malloc(sizeof(jack_default_audio_sample_t) *
+			   j2stl->audio.size);
+	if (jack_data == NULL) {
 		fprintf(stderr, "Unable to allocate memory for audio buffers "
 				"(fftw thread): %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
@@ -180,6 +228,7 @@ void *fftw_thread(void *arg)
 		exit(EXIT_FAILURE);
 	}
 
+	/* Wisdom import */
 	if (fftw_import_wisdom_from_filename(wisdom_name) == 0)
 		fprintf(stderr, "Unable to retrieve wisdom from %s\n",
 			wisdom_name);
@@ -190,17 +239,19 @@ void *fftw_thread(void *arg)
 	free(wisdom_name);
 	wisdom_name_size = -1;
 
+	/* Process loop */
 	while (1) {
+		static int i;
 		int low = 0, mid = 0, high = 0;
 
 		pthread_mutex_lock(&j2stl->memsync.mutex);
 		pthread_cond_wait(&j2stl->memsync.cond, &j2stl->memsync.mutex);
-		memcpy(left, j2stl->audio.data,
+		memcpy(jack_data, j2stl->audio.data,
 		       sizeof(jack_default_audio_sample_t) * j2stl->audio.size);
 		pthread_mutex_unlock(&j2stl->memsync.mutex);
 
 		for (size_t i = 0; i < j2stl->audio.size; i++) {
-			in[i] = left[i];
+			in[i] = jack_data[i];
 		}
 		fftw_execute(p);
 		max_left = 0;
@@ -271,6 +322,8 @@ void *fftw_thread(void *arg)
 		i += 1;
 	}
 
+	/* Should never get there */
+
 #ifdef _OUTPUT
 	fclose(fp);
 #endif
@@ -278,7 +331,7 @@ void *fftw_thread(void *arg)
 	fftw_destroy_plan(p);
 	fftw_free(out);
 	fftw_free(in);
-	free(left);
+	free(jack_data);
 
 	return NULL;
 }
@@ -293,6 +346,7 @@ int main(int argc, char *argv[])
 	pthread_t fftw_pthread_t;
 	int ret;
 
+	/* Memory initialization */
 	memset(&j2stl, 0, sizeof(audio_data));
 	pthread_mutex_init(&j2stl.memsync.mutex, NULL);
 	pthread_cond_init(&j2stl.memsync.cond, NULL);
@@ -305,7 +359,6 @@ int main(int argc, char *argv[])
 	}
 
 	/* Jack init */
-
 	jack_client_ptr = jack_client_open(client_name, JackNoStartServer,
 					   &status, NULL);
 	if (jack_client_ptr == NULL) {
@@ -324,9 +377,11 @@ int main(int argc, char *argv[])
 		client_name_real = client_name;
 	}
 
-        jack_set_process_callback(jack_client_ptr, jack_process, &j2stl);
-        jack_on_shutdown(jack_client_ptr, jack_shutdown, NULL);
+	/* Set jack callbacks */
+	jack_set_process_callback(jack_client_ptr, jack_process, &j2stl);
+	jack_on_shutdown(jack_client_ptr, jack_shutdown, NULL);
 
+	/* Retrieve audio format from jack */
 	j2stl.audio.sample_rate = jack_get_sample_rate(jack_client_ptr);
 	j2stl.audio.size = lrint((SAMPLE_DURATION / 1000.0) *
 				 j2stl.audio.sample_rate);
@@ -340,6 +395,7 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr, "Sample rate : %u\n", j2stl.audio.sample_rate);
 
+	/* jack: port creation */
 	j2stl.jack.input_port = jack_port_register(jack_client_ptr, "input",
 					     JACK_DEFAULT_AUDIO_TYPE,
 					     JackPortIsInput, 0);
@@ -349,7 +405,6 @@ int main(int argc, char *argv[])
 	}
 
 	/* Threads launch */
-
 	if ((ret = pthread_create(&fftw_pthread_t, NULL,
 				  fftw_thread, &j2stl))) {
 		fprintf(stderr, "Unable to spawn fftw thread: %s\n",
@@ -362,24 +417,13 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-//	ports = jack_get_ports(jack_client_ptr, NULL, NULL, JackPortIsPhysical | JackPortIsInput);
-//	if (ports == NULL) {
-//		fprintf(stderr, "No physical capture ports");
-//		exit(EXIT_FAILURE);
-//	}
-//	if (jack_connect(jack_client_ptr, ports[0], jack_port_name(data.input_port_left))) {
-//		fprintf(stderr, "Cannot connect input ports\n");
-//	}
-//	if (jack_connect(jack_client_ptr, ports[1], jack_port_name(data.input_port_right))) {
-//		fprintf(stderr, "Cannot connect input ports\n");
-//	}
-//	free(ports);
-
-
 	sleep(600);
 	
-
+	/* Threads termination */
+	// TODO: pthread_cancel
 	jack_client_close(jack_client_ptr);
+
+	/* Free memory & library close() */
 	free(j2stl.audio.data);
 	pthread_cond_destroy(&j2stl.memsync.cond);
 	pthread_mutex_destroy(&j2stl.memsync.mutex);
