@@ -70,6 +70,11 @@ int jack_process(jack_nframes_t nframes, void *arg)
 
 	/* Retrieve data from jack, size == nframes */
 	jack_data = jack_port_get_buffer(j2stl->jack.input_port, nframes);
+	if (jack_data == NULL) {
+		fprintf(stderr, "Invalid pointer returned by "
+				"jack_port_get_buffer\n");
+		exit(EXIT_FAILURE);
+	}
 
 	/* Check the available space in j2stl->audio.data */
 	if ( (j2stl->audio.size - j2stl->audio.position) < nframes)
@@ -107,6 +112,7 @@ int main(int argc, char *argv[])
 	jack_status_t status;
 	J2STL j2stl;
 	pthread_t fftw_pthread_t;
+	void *res;
 	int ret;
 
 	/* Memory initialization */
@@ -183,7 +189,23 @@ int main(int argc, char *argv[])
 	sleep(600);
 	
 	/* Threads termination */
-	// TODO: pthread_cancel
+	ret = pthread_cancel(fftw_pthread_t);
+	if (ret) {
+		fprintf(stderr, "Unable to cancel fftw_thead: %s\n",
+			strerror(ret));
+		exit(EXIT_FAILURE);
+	}
+	ret = pthread_join(fftw_pthread_t, &res);
+	if (ret) {
+		fprintf(stderr, "Unable to join fftw thread: %s\n",
+			strerror(ret));
+		exit(EXIT_FAILURE);
+	}
+	if (res != PTHREAD_CANCELED) {
+		fprintf(stderr, "fftw thread cancel() failed\n");
+		exit(EXIT_FAILURE);
+	}
+
 	jack_client_close(jack_client_ptr);
 
 	/* Free memory & library close() */

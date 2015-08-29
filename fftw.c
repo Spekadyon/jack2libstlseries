@@ -182,15 +182,6 @@ void *fftw_thread(void *arg)
 	fprintf(fp, "Sampling frequency (Hz): %u\n", data->sample_rate);
 #endif /* _OUTPUT */
 
-	/* Wisdom name */
-	wisdom_name_size = asprintf(&wisdom_name, "%s.wisdom",
-				    j2stl->status.progname);
-	if (wisdom_name_size == -1) {
-		fprintf(stderr, "Unable to allocate memory for wisdow filename:"
-				" %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-
 	/* Memory allocation */
 	fftwh.raw_data = malloc(sizeof(jack_default_audio_sample_t) *
 			   j2stl->audio.size);
@@ -199,23 +190,38 @@ void *fftw_thread(void *arg)
 				"(fftw thread): %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
+	pthread_cleanup_push(free, fftwh.raw_data);
+
 	fftwh.in = fftw_malloc(sizeof(fftw_complex) * j2stl->audio.size);
 	fftwh.out = fftw_malloc(sizeof(fftw_complex) * j2stl->audio.size);
 	if ( (fftwh.in == NULL) || (fftwh.out == NULL) ) {
 		fprintf(stderr, "Unable to allocate memory for fftw\n");
 		exit(EXIT_FAILURE);
 	}
+	pthread_cleanup_push(fftw_free, fftwh.in);
+	pthread_cleanup_push(fftw_free, fftwh.out);
+
+	/* Wisdom name */
+	wisdom_name_size = asprintf(&wisdom_name, "%s.wisdom",
+				    j2stl->status.progname);
+	if (wisdom_name_size == -1) {
+		fprintf(stderr, "Unable to allocate memory for wisdow filename:"
+				" %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	pthread_cleanup_push(free, wisdom_name);
 
 	/* Wisdom import */
 	if (fftw_import_wisdom_from_filename(wisdom_name) == 0)
 		fprintf(stderr, "Unable to retrieve wisdom from %s\n",
 			wisdom_name);
+
+	/* Plan creation */
 	fftwh.p = fftw_plan_dft_1d(j2stl->audio.size, fftwh.in, fftwh.out,
 				   FFTW_FORWARD, FFTW_PATIENT);
+	pthread_cleanup_push(fftw_destroy_plan, fftwh.p);
 	if (fftw_export_wisdom_to_filename(wisdom_name) == 0)
 		fprintf(stderr, "Unable to export wisdom to %s\n", wisdom_name);
-	free(wisdom_name);
-	wisdom_name_size = -1;
 
 	/* Process loop */
 	while (1) {
@@ -228,10 +234,11 @@ void *fftw_thread(void *arg)
 	fclose(fp);
 #endif
 
-	fftw_destroy_plan(fftwh.p);
-	fftw_free(fftwh.out);
-	fftw_free(fftwh.in);
-	free(fftwh.raw_data);
+	pthread_cleanup_pop(1); /* plan cleanup */
+	pthread_cleanup_pop(1); /* wisdom name */
+	pthread_cleanup_pop(1); /* fftw_free out */
+	pthread_cleanup_pop(1); /* fftw_free in */
+	pthread_cleanup_pop(1); /* free raw_data */
 
 	return NULL;
 }
