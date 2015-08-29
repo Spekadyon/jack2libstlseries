@@ -137,19 +137,6 @@ static void process_loop(J2STL *j2stl, struct fftw_handle *fftwp)
 		fprintf(stderr, "Unable to set keyboard color "
 			"(right)\n");
 
-#ifdef _OUTPUT
-	fprintf(fp, "%g\t%g\t%g\t%g\t%g\t%g\n",
-		low * data->sample_rate / (double)(data->size - 1),
-		cabs(out[low]) / (double)(data->size),
-		mid * data->sample_rate / (double)(data->size - 1),
-		cabs(out[mid]) / (double)(data->size),
-		high * data->sample_rate / (double)(data->size - 1),
-		cabs(out[high]) / (double)(data->size));
-	fflush(fp);
-#endif
-
-	//		fprintf(stderr, "%4d - fftw: max left %zd (%g Hz)\n",
-	//				i, max_left, max_left * data->sample_rate / (double)(data->size - 1));
 	loop_counter += 1;
 }
 
@@ -173,16 +160,6 @@ void *fftw_thread(void *arg)
 		fprintf(stderr, "FFTW thread launched\n");
 		fprintf(stderr, "FFTW thread initialization\n");
 	}
-
-#ifdef _OUTPUT
-	FILE *fp;
-	if ( (fp = fopen("jack.output", "w")) == NULL) {
-		fprintf(stderr, "Unable to open jack.output: %s\n",
-			strerror(errno));
-	}
-	fprintf(fp, "Array size: %zd\n", data->size);
-	fprintf(fp, "Sampling frequency (Hz): %u\n", data->sample_rate);
-#endif /* _OUTPUT */
 
 	/* Memory allocation */
 	fftwh.raw_data = malloc(sizeof(jack_default_audio_sample_t) *
@@ -240,11 +217,6 @@ void *fftw_thread(void *arg)
 	}
 
 	/* Should never get there */
-
-#ifdef _OUTPUT
-	fclose(fp);
-#endif
-
 	pthread_cleanup_pop(1); /* plan cleanup */
 	pthread_cleanup_pop(1); /* fftw_free out */
 	pthread_cleanup_pop(1); /* fftw_free in */
