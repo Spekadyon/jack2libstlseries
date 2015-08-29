@@ -53,6 +53,7 @@
 /* jack */
 typedef struct {
 	jack_port_t *input_port;
+	jack_client_t *client;
 } jack_data;
 
 /* audio data */
@@ -65,6 +66,7 @@ typedef struct {
 
 /* program status and options */
 typedef struct {
+	pthread_t fftw_thread;
 	const char *progname;
 	const char *wisdomfile;
 	int verbose;

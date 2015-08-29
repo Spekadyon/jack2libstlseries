@@ -54,18 +54,52 @@ void exit_help(const char *name)
 
 
 /*
+ * FFTW thread shutdown and memory cleaning
+ */
+
+void process_cleanup(J2STL *j2stl) {
+	int ret;
+	void *res;
+
+	/* Threads termination */
+	if (j2stl->status.verbose)
+		fprintf(stderr, "Threads termination\n");
+	ret = pthread_cancel(j2stl->status.fftw_thread);
+	if (ret) {
+		fprintf(stderr, "Unable to cancel fftw_thead: %s\n",
+			strerror(ret));
+		exit(EXIT_FAILURE);
+	}
+	ret = pthread_join(j2stl->status.fftw_thread, &res);
+	if (ret) {
+		fprintf(stderr, "Unable to join fftw thread: %s\n",
+			strerror(ret));
+		exit(EXIT_FAILURE);
+	}
+	if (res != PTHREAD_CANCELED) {
+		fprintf(stderr, "fftw thread cancel() failed\n");
+		exit(EXIT_FAILURE);
+	}
+
+	jack_client_close(j2stl->jack.client);
+
+	/* Free memory & library close() */
+	if (j2stl->status.verbose)
+		fprintf(stderr, "Memory cleanup\n");
+	free(j2stl->audio.data);
+	pthread_cond_destroy(&j2stl->memsync.cond);
+	pthread_mutex_destroy(&j2stl->memsync.mutex);
+	stlseries_close();
+}
+
+
+/*
  * Executes this function when the client is disconnected by jack
  */
 
 void jack_shutdown(void *arg)
 {
-	/* TODO: add pthread_cancel */
-	J2STL *j2stl = (J2STL *)arg;
-
-	free(j2stl->audio.data);
-	pthread_cond_destroy(&j2stl->memsync.cond);
-	pthread_mutex_destroy(&j2stl->memsync.mutex);
-	stlseries_close();
+	process_cleanup((J2STL *)arg);
 
 	exit(EXIT_FAILURE);
 }
@@ -163,11 +197,8 @@ int main(int argc, char *argv[])
 {
 	const char client_name[] = "SteelSeries Sound Illuminator";
 	const char *client_name_real;
-	jack_client_t *jack_client_ptr;
 	jack_status_t status;
 	J2STL j2stl;
-	pthread_t fftw_pthread_t;
-	void *res;
 	int ret;
 
 	/* Memory initialization */
@@ -189,9 +220,9 @@ int main(int argc, char *argv[])
 	}
 
 	/* Jack init */
-	jack_client_ptr = jack_client_open(client_name, JackNoStartServer,
+	j2stl.jack.client = jack_client_open(client_name, JackNoStartServer,
 					   &status, NULL);
-	if (jack_client_ptr == NULL) {
+	if (j2stl.jack.client == NULL) {
 		fprintf(stderr, "Unable to create jack client, status = "
 				"0x%2.0x<\n", status);
 		if (status & JackServerFailed)
@@ -200,7 +231,7 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 	if (status & JackNameNotUnique) {
-		client_name_real = jack_get_client_name(jack_client_ptr);
+		client_name_real = jack_get_client_name(j2stl.jack.client);
 		fprintf(stderr, "Name assigned to the client: %s\n",
 			client_name_real);
 	} else {
@@ -211,11 +242,11 @@ int main(int argc, char *argv[])
 	}
 
 	/* Set jack callbacks */
-	jack_set_process_callback(jack_client_ptr, jack_process, &j2stl);
-	jack_on_shutdown(jack_client_ptr, jack_shutdown, NULL);
+	jack_set_process_callback(j2stl.jack.client, jack_process, &j2stl);
+	jack_on_shutdown(j2stl.jack.client, jack_shutdown, NULL);
 
 	/* Retrieve audio format from jack */
-	j2stl.audio.sample_rate = jack_get_sample_rate(jack_client_ptr);
+	j2stl.audio.sample_rate = jack_get_sample_rate(j2stl.jack.client);
 	j2stl.audio.size = lrint((SAMPLE_DURATION / 1000.0) *
 				 j2stl.audio.sample_rate);
 	j2stl.audio.data = malloc(sizeof(jack_default_audio_sample_t) *
@@ -230,7 +261,7 @@ int main(int argc, char *argv[])
 			j2stl.audio.sample_rate);
 
 	/* jack: port creation */
-	j2stl.jack.input_port = jack_port_register(jack_client_ptr, "input",
+	j2stl.jack.input_port = jack_port_register(j2stl.jack.client, "input",
 					     JACK_DEFAULT_AUDIO_TYPE,
 					     JackPortIsInput, 0);
 	if (j2stl.jack.input_port == NULL) {
@@ -239,14 +270,14 @@ int main(int argc, char *argv[])
 	}
 
 	/* Threads launch */
-	if ((ret = pthread_create(&fftw_pthread_t, NULL,
+	if ((ret = pthread_create(&j2stl.status.fftw_thread, NULL,
 				  fftw_thread, &j2stl))) {
 		fprintf(stderr, "Unable to spawn fftw thread: %s\n",
 			strerror(ret));
 		exit(EXIT_FAILURE);
 	}
 
-	if (jack_activate(jack_client_ptr) != 0) {
+	if (jack_activate(j2stl.jack.client) != 0) {
 		fprintf(stderr, "Unable to activate client\n");
 		exit(EXIT_FAILURE);
 	}
@@ -255,35 +286,7 @@ int main(int argc, char *argv[])
 
 	sleep(600);
 	
-	/* Threads termination */
-	if (j2stl.status.verbose)
-		fprintf(stderr, "Threads termination\n");
-	ret = pthread_cancel(fftw_pthread_t);
-	if (ret) {
-		fprintf(stderr, "Unable to cancel fftw_thead: %s\n",
-			strerror(ret));
-		exit(EXIT_FAILURE);
-	}
-	ret = pthread_join(fftw_pthread_t, &res);
-	if (ret) {
-		fprintf(stderr, "Unable to join fftw thread: %s\n",
-			strerror(ret));
-		exit(EXIT_FAILURE);
-	}
-	if (res != PTHREAD_CANCELED) {
-		fprintf(stderr, "fftw thread cancel() failed\n");
-		exit(EXIT_FAILURE);
-	}
-
-	jack_client_close(jack_client_ptr);
-
-	/* Free memory & library close() */
-	if (j2stl.status.verbose)
-		fprintf(stderr, "Memory cleanup\n");
-	free(j2stl.audio.data);
-	pthread_cond_destroy(&j2stl.memsync.cond);
-	pthread_mutex_destroy(&j2stl.memsync.mutex);
-	stlseries_close();
+	process_cleanup(&j2stl);
 
 	return EXIT_SUCCESS;
 }
