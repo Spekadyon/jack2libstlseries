@@ -35,22 +35,7 @@
 #include <stlseries.h>
 #include <fftw3.h>
 
-/* Sample size, in milliseconds */
-#define SAMPLE_DURATION	50
-
-/* Frequency limits */
-#define FREQ_LIMIT_BASS_MEDIUM		250
-#define FREQ_LIMIT_MEDIUM_TREBLE	2000
-
-/* Colors (upper limits)*/
-#define AMP_OFF		0.008
-#define AMP_BLUE	0.01
-#define AMP_SKY		0.025
-#define AMP_GREEN	0.040
-#define AMP_YELLOW	0.055
-#define AMP_ORANGE	0.070
-#define AMP_RED		0.085
-#define AMP_PURPLE	0.1
+#include "jack2libstlseries.h"
 
 
 struct audio_data_s {

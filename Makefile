@@ -10,7 +10,7 @@ all: jack2libstlseries
 jack2libstlseries: jack2libstlseries.o
 	$(CC) -o $@ $< $(LDFLAGS) $(shell pkg-config jack --libs) $(shell pkg-config fftw3 --libs) -lm -lstlseries
 
-jack2libstlseries.o: jack2libstlseries.c
+jack2libstlseries.o: jack2libstlseries.c jack2libstlseries.h
 	$(CC) -c $< $(CFLAGS) $(shell pkg-config jack --cflags) $(shell pkg-config fftw3 --libs)
 
 clean:
