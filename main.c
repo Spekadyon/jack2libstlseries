@@ -48,7 +48,9 @@ void exit_help(const char *name)
 	fprintf(stderr, "\t%s [options]\n\n", name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "\t-w wisdom_file\n");
-	fprintf(stderr, "\t-t int, process timeout\n");
+	fprintf(stderr, "\t-t int, process timeout (default infinite)\n");
+	fprintf(stderr, "\t-s int, audio sampling, in milliseconds "
+			"(default %d\n", SAMPLE_DURATION);
 
 	exit(EXIT_FAILURE);
 }
@@ -156,6 +158,33 @@ int jack_process(jack_nframes_t nframes, void *arg)
 	return 0;
 }
 
+/*
+ * String to integer conversion
+ * Exit on failure
+ */
+
+long int strtolint(char opt, const char *str)
+{
+	long int val;
+	char *ptr;
+
+	errno = 0;
+	val = strtol(str, &ptr, 0);
+	if (errno) {
+		fprintf(stderr, "Option '-%c' - Unable to convert %s to an "
+			"integer: %s\n", opt, optarg,
+			strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	if (ptr == str) {
+		fprintf(stderr, "Option '-%c' - Invalid option: %s\n",
+			opt, optarg);
+		exit(EXIT_FAILURE);
+	}
+
+	return val;
+}
+
 
 /*
  * Option parsing procedure
@@ -164,10 +193,8 @@ int jack_process(jack_nframes_t nframes, void *arg)
 int opt_parse(int argc, char * const * argv, status_data *status)
 {
 	int opt;
-	const char opt_list[] = "w:vt:";
-	long int val;
-	char *ptr;
-	/* ajouter dump et timeout */
+	const char opt_list[] = "w:vt:s:";
+	/* ajouter dump */
 
 	while ( (opt = getopt(argc, argv, opt_list)) != -1 ) {
 		switch (opt) {
@@ -178,27 +205,25 @@ int opt_parse(int argc, char * const * argv, status_data *status)
 			status->verbose = 1;
 			break;
 		case 't':
-			errno = 0;
-			val = strtol(optarg, &ptr, 0);
-			if (errno) {
-				fprintf(stderr, "Unable to convert %s to an "
-					"integer: %s\n", optarg,
-					strerror(errno));
-				exit(EXIT_FAILURE);
-			}
-			if (ptr == optarg) {
-				fprintf(stderr, "Invalid timeout option: %s\n",
-					optarg);
-				exit(EXIT_FAILURE);
-			}
-			if (val < 0) {
+			status->timeout = strtolint('t', optarg);
+			if (status->timeout < 0) {
 				fprintf(stderr, "Timeout must be positive\n");
 				exit(EXIT_FAILURE);
 			}
-			status->timeout = val;
+			break;
+		case 's':
+			status->sampling = strtolint('s', optarg);
+			if (status->sampling <= 0) {
+				fprintf(stderr, "Sample duration must be "
+					"positive\n");
+				exit(EXIT_FAILURE);
+			}
 			break;
 		}
 	}
+
+	if (!status->sampling)
+		status->sampling = SAMPLE_DURATION;
 
 	return 0;
 }
@@ -213,7 +238,8 @@ void opt_dump(const status_data *status)
 	fprintf(stderr, "Option dump\n");
 	fprintf(stderr, "\tWisdom file: %s\n", status->wisdomfile);
 	fprintf(stderr, "\tVerbose: %d\n", status->verbose);
-	fprintf(stderr, "\tTimeout: %d\n", status->timeout);
+	fprintf(stderr, "\tTimeout: %d s\n", status->timeout);
+	fprintf(stderr, "\tSample duration: %d ms\n", status->sampling);
 }
 
 
@@ -271,7 +297,7 @@ int main(int argc, char *argv[])
 
 	/* Retrieve audio format from jack */
 	j2stl.audio.sample_rate = jack_get_sample_rate(j2stl.jack.client);
-	j2stl.audio.size = lrint((SAMPLE_DURATION / 1000.0) *
+	j2stl.audio.size = lrint((j2stl.status.sampling / 1000.0) *
 				 j2stl.audio.sample_rate);
 	j2stl.audio.data = malloc(sizeof(jack_default_audio_sample_t) *
 				  j2stl.audio.size);
@@ -312,7 +338,7 @@ int main(int argc, char *argv[])
 		sleep(j2stl.status.timeout);
 	else
 		for(;;);
-	
+
 	process_cleanup(&j2stl);
 
 	return EXIT_SUCCESS;

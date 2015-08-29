@@ -71,6 +71,7 @@ typedef struct {
 	const char *wisdomfile;
 	int verbose;
 	int timeout;
+	int sampling;
 } status_data;
 
 /* memory sync */
