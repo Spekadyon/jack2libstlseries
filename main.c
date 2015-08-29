@@ -48,6 +48,7 @@ void exit_help(const char *name)
 	fprintf(stderr, "\t%s [options]\n\n", name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "\t-w wisdom_file\n");
+	fprintf(stderr, "\t-t int, process timeout\n");
 
 	exit(EXIT_FAILURE);
 }
@@ -163,7 +164,9 @@ int jack_process(jack_nframes_t nframes, void *arg)
 int opt_parse(int argc, char * const * argv, status_data *status)
 {
 	int opt;
-	const char opt_list[] = "w:v";
+	const char opt_list[] = "w:vt:";
+	long int val;
+	char *ptr;
 	/* ajouter dump et timeout */
 
 	while ( (opt = getopt(argc, argv, opt_list)) != -1 ) {
@@ -173,6 +176,26 @@ int opt_parse(int argc, char * const * argv, status_data *status)
 			break;
 		case 'v':
 			status->verbose = 1;
+			break;
+		case 't':
+			errno = 0;
+			val = strtol(optarg, &ptr, 0);
+			if (errno) {
+				fprintf(stderr, "Unable to convert %s to an "
+					"integer: %s\n", optarg,
+					strerror(errno));
+				exit(EXIT_FAILURE);
+			}
+			if (ptr == optarg) {
+				fprintf(stderr, "Invalid timeout option: %s\n",
+					optarg);
+				exit(EXIT_FAILURE);
+			}
+			if (val < 0) {
+				fprintf(stderr, "Timeout must be positive\n");
+				exit(EXIT_FAILURE);
+			}
+			status->timeout = val;
 			break;
 		}
 	}
@@ -190,6 +213,7 @@ void opt_dump(const status_data *status)
 	fprintf(stderr, "Option dump\n");
 	fprintf(stderr, "\tWisdom file: %s\n", status->wisdomfile);
 	fprintf(stderr, "\tVerbose: %d\n", status->verbose);
+	fprintf(stderr, "\tTimeout: %d\n", status->timeout);
 }
 
 
@@ -284,7 +308,10 @@ int main(int argc, char *argv[])
 	if (j2stl.status.verbose)
 		fprintf(stderr, "Jack client thread launched\n");
 
-	sleep(600);
+	if (j2stl.status.timeout)
+		sleep(j2stl.status.timeout);
+	else
+		for(;;);
 	
 	process_cleanup(&j2stl);
 
