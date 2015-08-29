@@ -169,6 +169,11 @@ void *fftw_thread(void *arg)
 
 	j2stl = (J2STL *)arg;
 
+	if (j2stl->status.verbose) {
+		fprintf(stderr, "FFTW thread launched\n");
+		fprintf(stderr, "FFTW thread initialization\n");
+	}
+
 #ifdef _OUTPUT
 	FILE *fp;
 	if ( (fp = fopen("jack.output", "w")) == NULL) {
@@ -200,24 +205,36 @@ void *fftw_thread(void *arg)
 
 	/* Wisdom import */
 	if (j2stl->status.wisdomfile) {
+		if (j2stl->status.verbose)
+			fprintf(stderr, "FFTW thread - loading wisdom from %s\n",
+				j2stl->status.wisdomfile);
 		if (!fftw_import_wisdom_from_filename(j2stl->status.wisdomfile))
 			fprintf(stderr, "Unable to retrieve wisdom from %s\n",
 				j2stl->status.wisdomfile);
 	}
 
 	/* Plan creation */
+	if (j2stl->status.verbose)
+		fprintf(stderr, "FFTW thread - plan creation\n");
 	fftwh.p = fftw_plan_dft_1d(j2stl->audio.size, fftwh.in, fftwh.out,
 				   FFTW_FORWARD, FFTW_PATIENT);
+	if (j2stl->status.verbose)
+		fprintf(stderr, "FFTW thread - plan creation: done\n");
 	pthread_cleanup_push(fftw_destroy_plan, fftwh.p);
 
 	/* Save wisdom */
 	if (j2stl->status.wisdomfile) {
+		if (j2stl->status.verbose)
+			fprintf(stderr, "FFTW thread - writing wisdom to %s\n",
+				j2stl->status.wisdomfile);
 		if (!fftw_export_wisdom_to_filename(j2stl->status.wisdomfile))
 			fprintf(stderr, "Unable to export wisdom to %s\n",
 				j2stl->status.wisdomfile);
 	}
 
 	/* Process loop */
+	if (j2stl->status.verbose)
+		fprintf(stderr, "FFTW tread - main loop started\n");
 	while (1) {
 		process_loop(j2stl, &fftwh);
 	}

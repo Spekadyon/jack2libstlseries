@@ -67,6 +67,7 @@ typedef struct {
 typedef struct {
 	const char *progname;
 	const char *wisdomfile;
+	int verbose;
 } status_data;
 
 /* memory sync */

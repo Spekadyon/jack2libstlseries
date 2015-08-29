@@ -59,6 +59,7 @@ void exit_help(const char *name)
 
 void jack_shutdown(void *arg)
 {
+	/* TODO: add pthread_cancel */
 	J2STL *j2stl = (J2STL *)arg;
 
 	free(j2stl->audio.data);
@@ -128,17 +129,33 @@ int jack_process(jack_nframes_t nframes, void *arg)
 int opt_parse(int argc, char * const * argv, status_data *status)
 {
 	int opt;
-	const char opt_list[] = "w:";
-	/* ajouter verbose et timeout */
+	const char opt_list[] = "w:v";
+	/* ajouter dump et timeout */
 
 	while ( (opt = getopt(argc, argv, opt_list)) != -1 ) {
 		switch (opt) {
 		case 'w':
 			status->wisdomfile = optarg;
+			break;
+		case 'v':
+			status->verbose = 1;
+			break;
 		}
 	}
 
 	return 0;
+}
+
+
+/*
+ * Option structure dump
+ */
+
+void opt_dump(const status_data *status)
+{
+	fprintf(stderr, "Option dump\n");
+	fprintf(stderr, "\tWisdom file: %s\n", status->wisdomfile);
+	fprintf(stderr, "\tVerbose: %d\n", status->verbose);
 }
 
 
@@ -161,6 +178,9 @@ int main(int argc, char *argv[])
 
 	/* Options parsing */
 	opt_parse(argc, argv, &j2stl.status);
+	if (j2stl.status.verbose)
+		opt_dump(&j2stl.status);
+
 
 	/* Stlseries init */
 	if (stlseries_open(&j2stl.kbd.stlseries)) {
@@ -185,6 +205,9 @@ int main(int argc, char *argv[])
 			client_name_real);
 	} else {
 		client_name_real = client_name;
+		if (j2stl.status.verbose)
+			fprintf(stderr, "Jack client name: %s\n",
+				client_name_real);
 	}
 
 	/* Set jack callbacks */
@@ -202,8 +225,9 @@ int main(int argc, char *argv[])
 				"%s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
-
-	fprintf(stderr, "Sample rate : %u\n", j2stl.audio.sample_rate);
+	if (j2stl.status.verbose)
+		fprintf(stderr, "Jack sample rate: %u\n",
+			j2stl.audio.sample_rate);
 
 	/* jack: port creation */
 	j2stl.jack.input_port = jack_port_register(jack_client_ptr, "input",
@@ -226,10 +250,14 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Unable to activate client\n");
 		exit(EXIT_FAILURE);
 	}
+	if (j2stl.status.verbose)
+		fprintf(stderr, "Jack client thread launched\n");
 
 	sleep(600);
 	
 	/* Threads termination */
+	if (j2stl.status.verbose)
+		fprintf(stderr, "Threads termination\n");
 	ret = pthread_cancel(fftw_pthread_t);
 	if (ret) {
 		fprintf(stderr, "Unable to cancel fftw_thead: %s\n",
@@ -250,6 +278,8 @@ int main(int argc, char *argv[])
 	jack_client_close(jack_client_ptr);
 
 	/* Free memory & library close() */
+	if (j2stl.status.verbose)
+		fprintf(stderr, "Memory cleanup\n");
 	free(j2stl.audio.data);
 	pthread_cond_destroy(&j2stl.memsync.cond);
 	pthread_mutex_destroy(&j2stl.memsync.mutex);
