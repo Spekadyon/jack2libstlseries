@@ -46,7 +46,7 @@ typedef struct {
         unsigned int sample_rate;
         jack_default_audio_sample_t *data;
         size_t size;
-        size_t index;
+        size_t position;
 } audio_data;
 
 typedef struct {
@@ -103,25 +103,25 @@ int jack_process(jack_nframes_t nframes, void *arg)
 {
 	static int i;
 	J2STL *j2stl;
-	jack_default_audio_sample_t *left;
-	size_t nb_frames;
+        jack_default_audio_sample_t *jack_data;
+        size_t available_frames;
 
 	j2stl = (J2STL *)arg;
-	left = jack_port_get_buffer(j2stl->jack.input_port, nframes);
+        jack_data = jack_port_get_buffer(j2stl->jack.input_port, nframes);
 
-	if ( (j2stl->audio.size - j2stl->audio.index) < nframes)
-		nb_frames = j2stl->audio.size - j2stl->audio.index;
+        if ( (j2stl->audio.size - j2stl->audio.position) < nframes)
+                available_frames = j2stl->audio.size - j2stl->audio.position;
 	else
-		nb_frames = nframes;
+                available_frames = nframes;
 
 	pthread_mutex_lock(&j2stl->memsync.mutex);
-	memcpy(j2stl->audio.data + j2stl->audio.index, left, nb_frames *
+        memcpy(j2stl->audio.data + j2stl->audio.position, jack_data, available_frames *
 	       sizeof(jack_default_audio_sample_t));
-	j2stl->audio.index += nb_frames;
+        j2stl->audio.position += available_frames;
 
-	if (j2stl->audio.size == j2stl->audio.index) {
+        if (j2stl->audio.size == j2stl->audio.position) {
 		pthread_cond_signal(&j2stl->memsync.cond);
-		j2stl->audio.index = 0;
+                j2stl->audio.position = 0;
 	}
 
 	pthread_mutex_unlock(&j2stl->memsync.mutex);
