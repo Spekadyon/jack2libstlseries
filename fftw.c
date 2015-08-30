@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <math.h>
 #include <complex.h>
 
 #include <fftw3.h>
@@ -98,24 +99,29 @@ static void process_loop(J2STL *j2stl, struct fftw_handle *fftwp)
 	/* Transfer function calculations */
 	for (size_t i = 0; i < j2stl->audio.size/2; i++) {
 		double complex cur_bass, cur_medium, cur_treble;
-		double freq = i * j2stl->audio.sample_rate /
+		double sampling_freq;
+		double freq;
+
+		sampling_freq = j2stl->audio.sample_rate /
 			(double)(j2stl->audio.size - 1);
+		freq = i * sampling_freq;
 
 		cur_bass = fftwp->out[i]
-			* 1.0 / (1.0 + (double)FREQ_LIMIT_BASS_LOW / freq)
-			* 1.0 / (1.0 + freq / (double)FREQ_LIMIT_BASS_HIGH);
+			* pow(1.0 / (1.0 + (double)FREQ_LIMIT_BASS_LOW / freq), 2)
+			* pow(1.0 / (1.0 + freq / (double)FREQ_LIMIT_BASS_HIGH), 2);
 		cur_medium= fftwp->out[i]
-			* 1.0 / (1.0 + (double)FREQ_LIMIT_MEDIUM_LOW / freq)
-			* 1.0 / (1.0 + freq / (double)FREQ_LIMIT_MEDIUM_HIGH);
+			* pow(1.0 / (1.0 + (double)FREQ_LIMIT_MEDIUM_LOW / freq), 2)
+			* pow(1.0 / (1.0 + freq / (double)FREQ_LIMIT_MEDIUM_HIGH), 2);
 		cur_treble = fftwp->out[i]
-			* 1.0 / (1.0 + (double)FREQ_LIMIT_TREBLE_LOW / freq)
-			* 1.0 / (1.0 + freq / (double)FREQ_LIMIT_TREBLE_HIGH);
+			* pow(1.0 / (1.0 + (double)FREQ_LIMIT_TREBLE_LOW / freq), 2)
+			* pow(1.0 / (1.0 + freq / (double)FREQ_LIMIT_TREBLE_HIGH), 2);
 
-		if (cabs(cur_bass) > bass)
+		/* Get maxima */
+		if (bass < cabs(cur_bass))
 			bass = cabs(cur_bass);
-		if (cabs(cur_medium) > medium)
+		if (medium < cabs(cur_medium))
 			medium = cabs(cur_medium);
-		if (cabs(cur_treble) > treble)
+		if (treble < cabs(cur_treble))
 			treble = cabs(cur_treble);
 	}
 
