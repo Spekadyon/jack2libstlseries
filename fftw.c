@@ -39,6 +39,7 @@ struct fftw_handle {
 	fftw_plan p;
 };
 
+
 /*
  * Transform the amplitude in color
  * see jack2libstlseries.h for limit definitions
@@ -68,45 +69,52 @@ static unsigned char retrieve_color(double amplitude)
 static void process_loop(J2STL *j2stl, struct fftw_handle *fftwp)
 {
 	int ret;
-	/* Local raw audio data */
-	size_t max_left;
 	/* Loop counter */
 	static int loop_counter;
-	/* Maximums */
-	int low = 0, mid = 0, high = 0;
+	/* Amplitude maxima */
+	double bass = 0, medium = 0, treble = 0;
 
+	/* Wait for data */
 	pthread_mutex_lock(&j2stl->memsync.mutex);
 	pthread_cond_wait(&j2stl->memsync.cond, &j2stl->memsync.mutex);
+
+	/* Copy data to local buffer */
 	memcpy(fftwp->raw_data, j2stl->audio.data,
 	       sizeof(jack_default_audio_sample_t) * j2stl->audio.size);
+
+	/* Unlock memory */
 	pthread_mutex_unlock(&j2stl->memsync.mutex);
 
+	/* jack_default_audio_sample_t to fftw_complex conversion */
 	for (size_t i = 0; i < j2stl->audio.size; i++) {
 		fftwp->in[i] = fftwp->raw_data[i];
 	}
+
+	/* FFTW plan execution */
 	fftw_execute(fftwp->p);
-	max_left = 0;
-	for (size_t i = 0; i < j2stl->audio.size/2; i++) {
+
+	/* Transfer function calculations */
+	for (size_t i = 0; i < j2stl->audio.size; i++) {
+		double complex cur_bass, cur_medium, cur_treble;
 		double freq = i * j2stl->audio.sample_rate /
 			(double)(j2stl->audio.size - 1);
-		if (freq < FREQ_LIMIT_BASS_MEDIUM) {
-			if (cabs(fftwp->out[i]) > cabs(fftwp->out[low]))
-				low = i;
-		} else if (freq < FREQ_LIMIT_MEDIUM_TREBLE) {
-			if (mid == 0)
-				mid = i;
-			if (cabs(fftwp->out[i]) > cabs(fftwp->out[mid]))
-				mid = i;
-		} else {
-			if (high == 0)
-				high = i;
-			if (cabs(fftwp->out[i]) > cabs(fftwp->out[high]))
-				high = i;
-		}
 
-		if (cabs(fftwp->out[i]) > cabs(fftwp->out[max_left])) {
-			max_left = i;
-		}
+		cur_bass = fftwp->out[i]
+			* 1.0 / (1.0 + (double)FREQ_LIMIT_BASS_LOW / freq)
+			* 1.0 / (1.0 + freq / (double)FREQ_LIMIT_BASS_HIGH);
+		cur_medium= fftwp->out[i]
+			* 1.0 / (1.0 + (double)FREQ_LIMIT_MEDIUM_LOW / freq)
+			* 1.0 / (1.0 + freq / (double)FREQ_LIMIT_MEDIUM_HIGH);
+		cur_treble = fftwp->out[i]
+			* 1.0 / (1.0 + (double)FREQ_LIMIT_TREBLE_LOW / freq)
+			* 1.0 / (1.0 + freq / (double)FREQ_LIMIT_TREBLE_HIGH);
+
+		if (cabs(cur_bass) > bass)
+			bass = cabs(cur_bass);
+		if (cabs(cur_medium) > medium)
+			medium = cabs(cur_medium);
+		if (cabs(cur_treble) > treble)
+			treble = cabs(cur_treble);
 	}
 
 	/*
@@ -114,7 +122,7 @@ static void process_loop(J2STL *j2stl, struct fftw_handle *fftwp)
 	 */
 	ret = stlseries_setcolor_normal(j2stl->kbd.stlseries,
 					STLSERIES_ZONE_LEFT,
-					retrieve_color(cabs(fftwp->out[low]) /
+					retrieve_color(bass /
 						       (double)(j2stl->audio.size)),
 					STLSERIES_SATURATION_HIGH);
 	if (ret)
@@ -122,7 +130,7 @@ static void process_loop(J2STL *j2stl, struct fftw_handle *fftwp)
 			"(left)\n");
 	ret = stlseries_setcolor_normal(j2stl->kbd.stlseries,
 					STLSERIES_ZONE_CENTER,
-					retrieve_color(cabs(fftwp->out[mid]) /
+					retrieve_color(medium /
 						       (double)(j2stl->audio.size)),
 					STLSERIES_SATURATION_HIGH);
 	if (ret)
@@ -130,7 +138,7 @@ static void process_loop(J2STL *j2stl, struct fftw_handle *fftwp)
 			"(center)\n");
 	ret = stlseries_setcolor_normal(j2stl->kbd.stlseries,
 					STLSERIES_ZONE_RIGHT,
-					retrieve_color(cabs(fftwp->out[high]) /
+					retrieve_color(treble /
 						       (double)(j2stl->audio.size)),
 					STLSERIES_SATURATION_HIGH);
 	if (ret)
@@ -212,6 +220,7 @@ void *fftw_thread(void *arg)
 	/* Process loop */
 	if (j2stl->status.verbose)
 		fprintf(stderr, "FFTW tread - main loop started\n");
+
 	while (1) {
 		process_loop(j2stl, &fftwh);
 	}

@@ -25,8 +25,12 @@
 #define SAMPLE_DURATION	50
 
 /* Frequency limits */
-#define FREQ_LIMIT_BASS_MEDIUM		250
-#define FREQ_LIMIT_MEDIUM_TREBLE	2000
+#define FREQ_LIMIT_BASS_LOW		1
+#define FREQ_LIMIT_BASS_HIGH		250
+#define FREQ_LIMIT_MEDIUM_LOW		250
+#define FREQ_LIMIT_MEDIUM_HIGH		2000
+#define FREQ_LIMIT_TREBLE_LOW		2000
+#define FREQ_LIMIT_TREBLE_HIGH		24000
 
 /* Colors (upper limits)*/
 #define AMP_OFF		0.008
