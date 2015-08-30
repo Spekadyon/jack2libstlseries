@@ -96,7 +96,7 @@ static void process_loop(J2STL *j2stl, struct fftw_handle *fftwp)
 	fftw_execute(fftwp->p);
 
 	/* Transfer function calculations */
-	for (size_t i = 0; i < j2stl->audio.size; i++) {
+	for (size_t i = 0; i < j2stl->audio.size/2; i++) {
 		double complex cur_bass, cur_medium, cur_treble;
 		double freq = i * j2stl->audio.sample_rate /
 			(double)(j2stl->audio.size - 1);
