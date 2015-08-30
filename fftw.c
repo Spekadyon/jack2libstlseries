@@ -47,7 +47,9 @@ struct fftw_handle {
 
 static unsigned char retrieve_color(double amplitude)
 {
-	if (amplitude < AMP_BLUE)
+	if (amplitude < AMP_OFF)
+		return STLSERIES_COLOR_NONE;
+	else if (amplitude < AMP_BLUE)
 		return STLSERIES_COLOR_BLUE;
 	else if (amplitude < AMP_SKY)
 		return STLSERIES_COLOR_SKY;
